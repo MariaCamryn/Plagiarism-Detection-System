@@ -1,0 +1,37 @@
+﻿@model PlagiarismChecker.Web.Models.Submission
+@{
+    ViewData["Title"] = "Details";
+}
+
+<h2>Submission #@Model.Id</h2>
+
+<p><strong>Score:</strong> @(Model.Score * 100).ToString("0.00") %</p>
+<p><strong>Created:</strong> @Model.CreatedAt.ToLocalTime().ToString("g")</p>
+
+<h4>Highlights</h4>
+<ul>
+    @{
+        var highlights = Newtonsoft.Json.JsonConvert.DeserializeObject<List<string>>(Model.HighlightsJson);
+        foreach (var h in highlights)
+        {
+            <li>@h</li>
+        }
+    }
+</ul>
+
+<h4>Top Matches</h4>
+@{
+    var matches = Newtonsoft.Json.JsonConvert.DeserializeObject<dynamic>(Model.TopMatchesJson);
+    if (matches != null)
+    {
+        <ol>
+            @foreach (var m in matches)
+            {
+                <li>
+                    <b>@(m.source ?? m.id)</b> — Score: @(((double)m.score) * 100).ToString("0.00") %
+                    <div>@Html.Raw(System.Net.WebUtility.HtmlEncode((string)(m.excerpt ?? "")))</div>
+                </li>
+            }
+        </ol>
+    }
+}

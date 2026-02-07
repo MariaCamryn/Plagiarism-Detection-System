@@ -1,0 +1,180 @@
+/* New clean palette: teal + dark slate + soft bg */
+:root {
+    --accent: #0ea5a3; /* teal */
+    --accent-dark: #088f8d;
+    --muted: #6b7280; /* slate */
+    --bg: #f6fbfb;
+    --card: #ffffff;
+}
+
+/* ---- Layout & footer: full-height and persistent footer ---- */
+html, body {
+    height: 100%;
+    margin: 0;
+    padding: 0;
+}
+
+
+body {
+    background: var(--bg);
+    font-family: "Segoe UI", Roboto, Arial, sans-serif;
+    color: #0f172a;
+    margin: 0;
+    display: flex;
+    flex-direction: column;
+    min-height: 100vh;
+}
+
+/* main content area used by _Layout.cshtml: ensure it expands */
+main[role="main"] {
+    flex: 1 0 auto;
+    /* footer height (56px) + comfortable gap (24px) */
+    padding-bottom: calc(56px + 24px);
+    box-sizing: border-box;
+}
+
+
+/* center page container */
+.page-wrap {
+    display: flex;
+    justify-content: center;
+    padding: 40px 16px;
+}
+
+/* card */
+.checker-card {
+    width: 100%;
+    max-width: 980px;
+    border-radius: 12px;
+    box-shadow: 0 6px 20px rgba(10,20,30,0.06);
+    border: 1px solid rgba(2,6,23,0.04);
+    margin-bottom: 40px; /* leave space from footer */
+    background: var(--card);
+    padding-bottom: 18px;
+}
+
+/* title */
+.title {
+    color: var(--accent);
+    font-weight: 600;
+    font-size: 32px;
+    margin-bottom: 10px;
+}
+
+/* textarea */
+.text-area {
+    border-radius: 8px;
+    border: 1px solid #e6eef0;
+    padding: 12px;
+    font-size: 15px;
+    resize: vertical;
+}
+
+/* buttons */
+.btn-primary {
+    background: linear-gradient(90deg,var(--accent),var(--accent-dark));
+    border: none;
+    padding: 10px 18px;
+    border-radius: 8px;
+    color: white;
+}
+
+/* button spacing for centered layout */
+.me-3 {
+    margin-right: 1rem !important;
+}
+
+/* result styles */
+#resultCard {
+    border-top: 3px solid var(--accent);
+    padding-top: 12px;
+    margin-bottom: 40px;
+}
+
+#scoreSpan {
+    font-weight: 700;
+    color: #dc2626;
+}
+
+/* highlights & matches */
+#highlightsContainer li {
+    background: #fff7ed;
+    padding: 8px;
+    border-radius: 6px;
+    margin: 6px 0;
+}
+
+#matchesContainer li {
+    background: #f1f5f9;
+    padding: 8px;
+    border-radius: 6px;
+    margin: 6px 0;
+}
+
+/* footer improvements */
+footer.footer {
+    position: fixed !important;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    height: 56px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0 16px;
+    box-sizing: border-box;
+    background: #fff;
+    border-top: 1px solid rgba(2,6,23,0.05);
+    z-index: 10000; /* very high so it stays above content */
+    margin: 0;
+    width: 100%;
+}
+
+/* brand styling in navbar */
+.brand-logo {
+    width: 36px;
+    height: 36px;
+    border-radius: 8px;
+    background: linear-gradient(90deg, var(--accent), var(--accent-dark));
+    display: inline-block;
+    margin-right: 10px;
+    box-shadow: 0 4px 12px rgba(14,165,163,0.15);
+}
+
+.brand-text {
+    font-weight: 700;
+    font-size: 18px;
+    color: #0f172a;
+}
+
+/* responsive */
+@media (max-width: 640px) {
+    .checker-card {
+        padding: 12px;
+    }
+
+    .title {
+        font-size: 22px;
+    }
+
+    .text-area {
+        font-size: 14px;
+    }
+}
+.footer * {
+    margin: 0;
+    padding: 0;
+    line-height: 1.2;
+}
+
+/* if you used large bottom padding earlier, remove it */
+body > .container, .page-wrap {
+    padding-bottom: 0 !important;
+}
+footer.footer .container {
+    margin: 0 auto;
+    text-align: center;
+    width: 100%; /* let it expand full width */
+    max-width: 100%; /* ignore bootstrap's container max-width */
+    padding: 0;
+}

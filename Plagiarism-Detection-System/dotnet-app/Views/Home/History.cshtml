@@ -1,0 +1,28 @@
+﻿@model IEnumerable<PlagiarismChecker.Web.Models.Submission>
+@{
+    ViewData["Title"] = "History";
+}
+
+<h2>Submission History</h2>
+
+<table class="table">
+    <thead>
+        <tr>
+            <th>Id</th>
+            <th>Score</th>
+            <th>Created</th>
+            <th>Details</th>
+        </tr>
+    </thead>
+    <tbody>
+        @foreach (var s in Model)
+        {
+            <tr>
+                <td>@s.Id</td>
+                <td>@String.Format("{0:0.00} %", s.Score * 100)</td>
+                <td>@s.CreatedAt.ToLocalTime().ToString("g")</td>
+                <td><a asp-action="Details" asp-route-id="@s.Id">View</a></td>
+            </tr>
+        }
+    </tbody>
+</table>

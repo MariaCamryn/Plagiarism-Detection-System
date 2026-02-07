@@ -1,0 +1,176 @@
+﻿@{
+    ViewData["Title"] = "Plagiarism Checker";
+}
+@section Styles {
+    <link rel="stylesheet" href="~/css/site.css" asp-append-version="true" />
+}
+
+<div class="page-wrap">
+    <div class="checker-card card mx-auto">
+        <div class="card-body">
+            <h2 class="title">AI-Powered Plagiarism Checker</h2>
+
+            <label for="inputText" class="form-label">Paste text to check</label>
+            <textarea id="inputText" class="form-control text-area" rows="10"></textarea>
+
+            <div class="mt-3">
+                <label for="fileUpload" class="form-label">Or upload .txt file</label>
+                <input id="fileUpload" class="form-control-file" type="file" accept=".txt" />
+            </div>
+
+            <div class="mt-3 d-flex justify-content-center align-items-center">
+                <button id="btnCheck" class="btn btn-primary me-3">Check</button>
+            </div>
+
+
+
+            <!-- Result card (hide by default) -->
+            <div id="resultCard" class="checker-card" style="display:none; padding:22px;">
+                <h3>Result</h3>
+
+                <p>Plagiarism Score: <span id="scoreSpan">N/A</span></p>
+
+                <!-- HIGHLIGHTS: wrapper so we can hide it when empty -->
+                <div id="highlightsWrapper" style="display:none; margin-top:12px;">
+                    <div id="highlightsContainer"></div>
+                </div>
+
+                <!-- TOP MATCHES: wrapper so we can hide it when empty -->
+                <div id="matchesWrapper" style="display:none; margin-top:12px;">
+                    <div id="matchesContainer"></div>
+                </div>
+            </div>
+
+        </div>
+    </div>
+</div>
+
+@section Scripts {
+    <script>
+        /* helpers */
+        function toSafeString(v) {
+            if (v === null || v === undefined) return '';
+            if (typeof v === 'string') return v;
+            try { return JSON.stringify(v); } catch (e) { return String(v); }
+        }
+        function escapeHtmlVal(val) {
+            const s = toSafeString(val);
+            return s.replace(/[&<"'>]/g, function (m) {
+                return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[m];
+            });
+        }
+        function tryParseJsonMaybeString(val) {
+            if (val === null || val === undefined) return null;
+            if (typeof val === 'string') {
+                const t = val.trim();
+                if (t.startsWith('{') || t.startsWith('[') || t.startsWith('"')) {
+                    try { return JSON.parse(val); } catch (e) { return val; }
+                }
+                return val;
+            }
+            return val;
+        }
+
+        /* POST to /Home/Check and return JSON */
+        async function postCheck(text) {
+            const form = new FormData();
+            form.append('text', text);
+            const res = await fetch('/Home/Check', { method: 'POST', body: form });
+            const bodyText = await res.text();
+            let json = null;
+            try { json = bodyText ? JSON.parse(bodyText) : null; }
+            catch (e) { throw new Error('Invalid JSON response: ' + bodyText); }
+            if (!res.ok) throw new Error(json?.error ?? 'Server error');
+            return json;
+        }
+
+        /* file upload -> paste into textarea */
+        const fileUpload = document.getElementById('fileUpload');
+        if (fileUpload) {
+            fileUpload.addEventListener('change', async (e) => {
+                const file = e.target.files[0];
+                if (!file) return;
+                const text = await file.text();
+                const inputText = document.getElementById('inputText');
+                if (inputText) inputText.value = text;
+            });
+        }
+
+        /* Check button handler */
+        const btn = document.getElementById('btnCheck');
+        if (btn) {
+            btn.addEventListener('click', async () => {
+                const inputText = document.getElementById('inputText');
+                const text = inputText ? inputText.value.trim() : '';
+                if (!text) { alert('Please paste text or upload a .txt file.'); return; }
+
+                const originalText = btn.textContent;
+                btn.disabled = true;
+                btn.textContent = 'Checking...';
+
+                try {
+                    const data = await postCheck(text);
+
+                    /* Score handling */
+                    let scoreVal = null;
+                    if (data && data.score !== undefined && data.score !== null) {
+                        const n = Number(data.score);
+                        if (!Number.isNaN(n)) scoreVal = n;
+                    }
+                    document.getElementById('resultCard').style.display = 'block';
+                    document.getElementById('scoreSpan').textContent = scoreVal !== null ? (scoreVal * 100).toFixed(2) + '%' : 'N/A';
+
+                    /* Highlights: try parse if it's JSON-string or array */
+                    let highlightsRaw = tryParseJsonMaybeString(data?.highlights ?? data?.HighlightsJson ?? data?.highlightsJson ?? null);
+                    let highlightsArr = [];
+                    if (Array.isArray(highlightsRaw)) highlightsArr = highlightsRaw;
+                    else if (typeof highlightsRaw === 'string' && highlightsRaw.trim()) highlightsArr = [highlightsRaw];
+                    else if (highlightsRaw && typeof highlightsRaw === 'object') highlightsArr = [highlightsRaw];
+
+                    const highlightsContainer = document.getElementById('highlightsContainer');
+                    const highlightsWrapper = document.getElementById('highlightsWrapper');
+                    if (highlightsArr && highlightsArr.length) {
+                        highlightsContainer.innerHTML = '<strong>Highlights:</strong><ul>' + highlightsArr.map(h => `<li>${escapeHtmlVal(h)}</li>`).join('') + '</ul>';
+                        highlightsWrapper.style.display = '';
+                    } else {
+                        highlightsContainer.innerHTML = '';
+                        highlightsWrapper.style.display = 'none';
+                    }
+
+                    /* Top matches: parse safely */
+                    let matchesRaw = tryParseJsonMaybeString(data?.top_matches ?? data?.TopMatchesJson ?? data?.topMatchesJson ?? null);
+                    let matchesArr = [];
+                    if (Array.isArray(matchesRaw)) matchesArr = matchesRaw;
+                    else if (matchesRaw && typeof matchesRaw === 'object') matchesArr = Array.isArray(matchesRaw) ? matchesRaw : [matchesRaw];
+                    else if (typeof matchesRaw === 'string' && matchesRaw.trim()) matchesArr = [{ source: matchesRaw, score: null, excerpt: '' }];
+
+                    const matchesContainer = document.getElementById('matchesContainer');
+                    const matchesWrapper = document.getElementById('matchesWrapper');
+                    if (matchesArr && matchesArr.length) {
+                        matchesContainer.innerHTML = '<strong>Top matches:</strong><ol>' + matchesArr.map(m => {
+                            const src = m?.source ?? m?.id ?? 'source';
+                            const excerpt = m?.excerpt ?? m?.excerptText ?? '';
+                            const ms = Number(m?.score);
+                            const msText = (!Number.isNaN(ms)) ? (ms * 100).toFixed(2) + '%' : 'N/A';
+                            return `<li><b>${escapeHtmlVal(src)}</b> — ${escapeHtmlVal(msText)}<div style="font-size:0.9em; color:#444">${escapeHtmlVal(excerpt)}</div></li>`;
+                        }).join('') + '</ol>';
+                        matchesWrapper.style.display = '';
+                    } else {
+                        matchesContainer.innerHTML = '';
+                        matchesWrapper.style.display = 'none';
+                    }
+
+                    // scroll into view on small screens
+                    document.getElementById('resultCard').scrollIntoView({ behavior: 'smooth', block: 'start' });
+
+                } catch (err) {
+                    console.error(err);
+                    alert(err.message || 'Unexpected error. See console.');
+                } finally {
+                    btn.disabled = false;
+                    btn.textContent = originalText;
+                }
+            });
+        }
+    </script>
+}

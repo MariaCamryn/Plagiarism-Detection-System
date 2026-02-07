@@ -1,0 +1,246 @@
+# ml_service.py
+from flask import Flask, request, jsonify
+from pymongo import MongoClient
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.metrics.pairwise import cosine_similarity
+import os, json, pickle
+from datetime import datetime
+from dotenv import load_dotenv
+
+# Load .env if present
+load_dotenv()
+
+app = Flask(__name__)
+
+# ------------------ Configuration (defaults) ------------------
+# These default values come from your package.json earlier.
+MONGO_URI = os.getenv(
+    "MONGO_URI",
+    "mongodb+srv://amariacamryn:rajesh1975@restaurantapicluster.3pao5uv.mongodb.net/?retryWrites=true&w=majority&appName=RestaurantApiCluster"
+)
+DB_NAME = os.getenv("DB_NAME", "PlagiarismCheckerDb")
+COL_NAME = os.getenv("COL_NAME", "submissions")
+PERSIST_DIR = os.getenv("PERSIST_DIR", "./persist")
+VECTOR_PATH = os.path.join(PERSIST_DIR, "tfidf_vectorizer.pkl")
+DOCV_PATH = os.path.join(PERSIST_DIR, "doc_vectors.pkl")
+DOCMETA_PATH = os.path.join(PERSIST_DIR, "doc_meta.json")
+
+os.makedirs(PERSIST_DIR, exist_ok=True)
+
+# ------------------ Mongo client ------------------
+client = MongoClient(MONGO_URI)
+db = client[DB_NAME]
+docs_col = db[COL_NAME]
+
+# ------------------ In-memory index objects ------------------
+vectorizer = None
+doc_vectors = None
+doc_meta = []  # list of dicts: { id, title, source, excerpt }
+
+# ------------------ Index builder / loader ------------------
+def load_index():
+    """
+    Load TF-IDF vectorizer + doc vectors from disk if available,
+    otherwise build from MongoDB collection and persist to disk.
+    Robust: filters empty docs, prefers 'Content' field, falls back to a small seed.
+    """
+    global vectorizer, doc_vectors, doc_meta
+
+    # Try loading persisted index
+    try:
+        if os.path.exists(VECTOR_PATH) and os.path.exists(DOCV_PATH) and os.path.exists(DOCMETA_PATH):
+            with open(VECTOR_PATH, "rb") as f:
+                vectorizer = pickle.load(f)
+            with open(DOCV_PATH, "rb") as f:
+                doc_vectors = pickle.load(f)
+            with open(DOCMETA_PATH, "r", encoding="utf-8") as f:
+                doc_meta = json.load(f)
+            app.logger.info("Loaded persisted TF-IDF and doc vectors (%d docs).", len(doc_meta))
+            return
+    except Exception as e:
+        app.logger.warning("Failed to load persisted index: %s", e)
+
+    # Build from DB
+    app.logger.info("Building index from DB '%s.%s' ...", DB_NAME, COL_NAME)
+    docs = list(docs_col.find({}))
+    contents = []
+    doc_meta = []
+
+    for d in docs:
+        # Prefer 'Content' field (capital C) as your DB uses it.
+        content = d.get("Content")
+        if not content:
+            # fallback to other common fields
+            content = (
+                d.get("content") or d.get("Text") or d.get("text") or
+                d.get("Body") or d.get("body") or
+                d.get("SubmissionText") or d.get("submissionText") or ""
+            )
+
+        # ensure we have a non-empty string
+        if not content or not str(content).strip():
+            continue
+
+        content_str = str(content)
+        contents.append(content_str)
+        doc_meta.append({
+            "id": str(d.get("_id")),
+            "title": d.get("title", "")[:120],
+            "source": d.get("source", "") or d.get("Source", ""),
+            "excerpt": (content_str[:300] + "...") if len(content_str) > 300 else content_str
+        })
+
+    # If nothing useful found, fallback to a tiny seed corpus (prevents empty vocabulary)
+    if not contents:
+        app.logger.warning("No non-empty documents found in DB; using seed corpus.")
+        seed = [
+            "This is a seed corpus used to initialize the plagiarism engine.",
+            "Add real documents to the MongoDB collection to make the engine useful."
+        ]
+        vectorizer = TfidfVectorizer().fit(seed)
+        doc_vectors = vectorizer.transform(seed)
+        doc_meta = [
+            {"id": "seed1", "title": "seed 1", "source": "internal", "excerpt": seed[0]},
+            {"id": "seed2", "title": "seed 2", "source": "internal", "excerpt": seed[1]},
+        ]
+    else:
+        # Less aggressive pruning so short corpora still work
+        vectorizer = TfidfVectorizer(
+            max_df=1.0,         # don't drop terms seen in many docs
+            min_df=1,           # include rare words
+            ngram_range=(1,2),  # unigrams + bigrams
+            token_pattern=r"(?u)\b\w+\b"
+        )
+        try:
+            doc_vectors = vectorizer.fit_transform(contents)
+        except Exception as e:
+            app.logger.warning("Vectorizer error (falling back to seed): %s", e)
+            seed = [
+                "This is a seed corpus used to initialize the plagiarism engine.",
+                "Add real documents to the MongoDB collection to make the engine useful."
+            ]
+            vectorizer = TfidfVectorizer().fit(seed)
+            doc_vectors = vectorizer.transform(seed)
+            doc_meta = [
+                {"id": "seed1", "title": "seed 1", "source": "internal", "excerpt": seed[0]},
+                {"id": "seed2", "title": "seed 2", "source": "internal", "excerpt": seed[1]},
+            ]
+
+    # Persist index for faster restarts
+    try:
+        with open(VECTOR_PATH, "wb") as f:
+            pickle.dump(vectorizer, f)
+        with open(DOCV_PATH, "wb") as f:
+            pickle.dump(doc_vectors, f)
+        with open(DOCMETA_PATH, "w", encoding="utf-8") as f:
+            json.dump(doc_meta, f, ensure_ascii=False, indent=2)
+        app.logger.info("Index persisted to disk. Documents indexed: %d", len(doc_meta))
+    except Exception as e:
+        app.logger.warning("Failed to persist index: %s", e)
+
+# Build or load index at startup
+load_index()
+
+# ------------------ Routes ------------------
+@app.route("/health", methods=["GET"])
+def health():
+    return jsonify({"status": "ok", "docs_indexed": len(doc_meta)}), 200
+
+
+@app.route("/docs/add", methods=["POST"])
+def add_doc():
+    """
+    Add a document to the collection. JSON: { title, source, content }.
+    For demo we rebuild the index immediately (cheap for small collections).
+    """
+    payload = request.get_json(force=True)
+    title = payload.get("title", "")
+    source = payload.get("source", "")
+    content = payload.get("content", "")
+
+    if not content or not str(content).strip():
+        return jsonify({"error": "empty content"}), 400
+
+    doc = {"title": title, "source": source, "Content": content, "created_at": datetime.utcnow()}
+    res = docs_col.insert_one(doc)
+
+    # Rebuild index so new doc is searchable right away (acceptable for demo)
+    try:
+        load_index()
+    except Exception as e:
+        app.logger.warning("Reindex after add failed: %s", e)
+
+    return jsonify({"id": str(res.inserted_id)}), 201
+
+
+@app.route("/docs/reindex", methods=["POST"])
+def reindex_route():
+    try:
+        load_index()
+        return jsonify({"reindexed": True, "docs": len(doc_meta)}), 200
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/predict", methods=["POST"])
+def predict():
+    """
+    Accept JSON: {"text": "..."}.
+    Return: { score, top_matches: [{id, source, score, excerpt}], highlights: [...] }
+    """
+    data = request.get_json(force=True)
+    text = data.get("text", "")[:5000]
+
+    if not text or not str(text).strip():
+        return jsonify({"error": "empty text"}), 400
+
+    global vectorizer, doc_vectors, doc_meta
+    if vectorizer is None or doc_vectors is None:
+        return jsonify({"error": "index not ready"}), 500
+
+    try:
+        input_vec = vectorizer.transform([text])
+        sims = cosine_similarity(input_vec, doc_vectors).flatten()
+    except Exception as e:
+        app.logger.exception("Similarity error")
+        return jsonify({"error": str(e)}), 500
+
+    max_sim = float(sims.max()) if sims.size else 0.0
+
+    # Top 3 matches
+    top_n = min(3, len(sims))
+    top_idx = sims.argsort()[::-1][:top_n]
+    top_matches = []
+    for i in top_idx:
+        meta = doc_meta[i] if i < len(doc_meta) else {}
+        top_matches.append({
+            "id": meta.get("id", str(i)),
+            "source": meta.get("source", meta.get("title", f"doc_{i}")),
+            "score": round(float(sims[i]), 4),
+            "excerpt": meta.get("excerpt", "")[:300]
+        })
+
+    # Simple highlights: words from input that appear in corpus excerpts (naive)
+    text_words = [w.lower().strip(".,;:()[]\"'") for w in text.split() if len(w) > 3]
+    corpus_text = " ".join([m.get("excerpt", "") for m in doc_meta]).lower()
+    highlights = []
+    added = set()
+    for w in text_words:
+        if w in corpus_text and w not in added:
+            highlights.append(w)
+            added.add(w)
+        if len(highlights) >= 8:
+            break
+
+    return jsonify({
+        "score": max_sim,
+        "top_matches": top_matches,
+        "highlights": highlights
+    }), 200
+
+
+# ------------------ Run ------------------
+if __name__ == "__main__":
+    port = int(os.getenv("PORT", 8000))
+    # debug=True is helpful while developing; remove or set False for production
+    app.run(host="0.0.0.0", port=port, debug=True)

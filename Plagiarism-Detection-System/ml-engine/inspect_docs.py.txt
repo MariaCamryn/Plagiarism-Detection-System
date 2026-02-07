@@ -1,0 +1,32 @@
+# inspect_docs.py
+from pymongo import MongoClient
+import os
+from dotenv import load_dotenv
+load_dotenv()
+
+MONGO_URI = os.getenv("MONGO_URI")
+DB_NAME = os.getenv("DB_NAME", "PlagiarismCheckerDb")
+COL_NAME = os.getenv("COL_NAME", "submissions")
+
+print("Using:", MONGO_URI, DB_NAME, COL_NAME)
+client = MongoClient(MONGO_URI)
+col = client[DB_NAME][COL_NAME]
+
+count = col.count_documents({})
+print("Total documents in collection:", count)
+print("="*60)
+
+for i, d in enumerate(col.find().limit(10)):
+    print(f"--- doc #{i} _id={d.get('_id')} ---")
+    # print all top-level keys (small preview)
+    keys = list(d.keys())
+    print("keys:", keys)
+    # try common text fields and print lengths / sample
+    for k in ['Content','content','SubmissionText','submissionText','text','Text','body','Body','submission','Submission','submission_text','submissionText']:
+        if k in d:
+            v = d.get(k)
+            l = len(v) if isinstance(v, str) else 'N/A'
+            snippet = (v[:200] + "...") if isinstance(v, str) and len(v) > 200 else v
+            print(f" field '{k}': len={l}")
+            print("  preview:", repr(snippet)[:400])
+    print()

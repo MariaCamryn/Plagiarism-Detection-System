@@ -1,0 +1,6 @@
+flask
+pymongo
+scikit-learn
+python-dotenv
+gunicorn
+dnspython
